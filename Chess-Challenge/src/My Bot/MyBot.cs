@@ -3,11 +3,10 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Collections.Generic;
-using System.Net.NetworkInformation;
 
 public class MyBot : IChessBot
 {
-    public int EvaluateBoard(Board board, bool isDraw, bool me)
+    public int EvaluateBoard(Board board, bool isDraw)
     {
         int score = 0;
         PieceList[] list = board.GetAllPieceLists();
@@ -15,6 +14,7 @@ public class MyBot : IChessBot
         Square myKingSquare = new Square("a8");
         Square oppKingSquare = new Square("a1");
         int kingmalus;
+        bool me = board.IsWhiteToMove;
         for (int i = 0; i < PiecesNumber; i++)
         {
             for (int j = 0; j < list[i].Count(); j++)
@@ -40,20 +40,20 @@ public class MyBot : IChessBot
                     if (me)
                     {
                         if (board.GetPiece(new Square("d1")).IsNull)
-                            score -= 5;
+                            score -= 3;
                         if (board.GetPiece(new Square("b1")).IsNull)
-                            score += 5;
+                            score += 1;
                         if (board.GetPiece(new Square("g1")).IsNull)
-                            score += 5;
+                            score += 1;
                     }
                     else
                     {
                         if (board.GetPiece(new Square("d8")).IsNull)
-                            score += 5;
+                            score += 3;
                         if (board.GetPiece(new Square("b8")).IsNull)
-                            score -= 5;
+                            score -= 1;
                         if (board.GetPiece(new Square("g8")).IsNull)
-                            score -= 5;
+                            score -= 1;
                     }
                 }
                 switch (piece.PieceType)
@@ -97,30 +97,29 @@ public class MyBot : IChessBot
                 }
             }
         }
-        // After processing all pieces and tracking kings' positions, consider the distance between kings in the endgame.
-        if (board.PlyCount >= 40) // Assuming endgame starts around move 20 for both players. Adjust as needed.
+        if (board.PlyCount >= 40) 
         {
-            // Ensure both kings were found
+  
                 int distance = Math.Abs(myKingSquare.File - oppKingSquare.File) + Math.Abs(myKingSquare.Rank - oppKingSquare.Rank);
 
-                // If evaluating for black (me == false), reverse the score effect
-                int modifier = me ? 1 : -1;
+                int modifier = board.IsWhiteToMove ? 1 : -1;
 
-                // Adjust score based on distance, smaller distance gives positive score for white and negative score for black
-                score += modifier * (10 - distance) * 3; // Multiplier of 5 is just an example, adjust for desired influence.
+                score += modifier * (10 - distance) * 3;
         }
 
         if (isDraw)
         {
-            if (me)
-                    score -= 50;
-            else if (!me)
-                    score += 50;
+            if (board.IsWhiteToMove && score >= 10) // Bot is white
+                score = -2000;
+            else if (!board.IsWhiteToMove && score <= -10)
+                score = 2000;
         }
         return score;
     }
 
-    public (List<(Move move, Board board)> topMoves, int bestScore) MiniMax(Board board, int depth, int alpha, int beta, bool maximizingPlayer, bool isDraw, bool me)
+    private bool wasDrawDetected = false;
+
+    public (Move, int) MiniMax(Board board, int depth, int alpha, int beta, bool maximizingPlayer, bool isDraw)
     {
         Move[] moves;
         if (depth == 1)
@@ -132,44 +131,32 @@ public class MyBot : IChessBot
         Move bestMove = Move.NullMove;
         int maxEval;
         int minEval;
-        bool t = isDraw;
-        List<(Move move, Board board, int score)> moveBoardScores = new List<(Move move, Board board, int score)>();
+        if (isDraw || board.IsDraw())
+            wasDrawDetected = true;
         if (depth == 0)
         {
-            int score = EvaluateBoard(board, isDraw, me);
-            if (moves.Length > 0)
-            {
-                moveBoardScores.Add((moves[0], board, score));
-            }
-            return (ExtractTopMoves(moveBoardScores, maximizingPlayer), score);
+            return (Move.NullMove, EvaluateBoard(board, wasDrawDetected));
         }
-
-
         if (maximizingPlayer)
         {
             maxEval = int.MinValue;
-
             foreach (Move move in moves)
             {
-                if (t == false && board.IsDraw() == false)
-                    isDraw = false;
-                if (board.IsDraw())
-                    isDraw = true;
                 board.MakeMove(move);
-                if (!isDraw && board.IsDraw() == true)
-                    isDraw = true;
-                var result = MiniMax(board, depth - 1, alpha, beta, !maximizingPlayer,isDraw, me);
-                int eval = result.bestScore;
+                if (board.IsDraw())
+                    wasDrawDetected = true;
+
+                int eval = MiniMax(board, depth - 1, alpha, beta, !maximizingPlayer, wasDrawDetected).Item2;
+
+                board.UndoMove(move);
+                if (wasDrawDetected && !board.IsDraw())
+                    wasDrawDetected = false;
 
                 if (maxEval < eval)
                 {
                     maxEval = eval;
                     bestMove = move;
                 }
-                moveBoardScores.Add((move, board, eval));
-                board.UndoMove(move);
-                if (isDraw && board.IsDraw() == false)
-                    isDraw = false;
 
                 if (eval >= beta)
                 {
@@ -178,64 +165,45 @@ public class MyBot : IChessBot
 
                 alpha = Math.Max(alpha, eval);
             }
-            return (ExtractTopMoves(moveBoardScores, true), maxEval);
+            return (bestMove, maxEval);
         }
         else
         {
             minEval = int.MaxValue;
             foreach (Move move in moves)
             {
-                if (t == false && board.IsDraw() == false)
-                    isDraw = false;
-                if (board.IsDraw())
-                    isDraw = true;
+
+                   
                 board.MakeMove(move);
-                if (!isDraw && board.IsDraw() == true)
-                    isDraw = true;
-                var result = MiniMax(board, depth - 1, alpha, beta, !maximizingPlayer, isDraw, me);
-                int eval = result.bestScore;
+                if (board.IsDraw())
+                    wasDrawDetected = true;
+
+                int eval = MiniMax(board, depth - 1, alpha, beta, !maximizingPlayer, wasDrawDetected).Item2;
+
+                board.UndoMove(move);
+                if (wasDrawDetected && !board.IsDraw())
+                    wasDrawDetected = false;
+
                 if (minEval > eval)
                 {
                     minEval = eval;
                     bestMove = move;
                 }
-                moveBoardScores.Add((move, board, eval));
-                board.UndoMove(move);
-                if (isDraw && board.IsDraw() == false)
-                    isDraw = false;
+
                 if (eval <= alpha)
                 {
                     break;
                 }
+
                 beta = Math.Min(beta, eval);
             }
-            return (ExtractTopMoves(moveBoardScores, false), minEval);
+            return (bestMove, minEval);
         }
-    }
 
-    private List<(Move move, Board board)> ExtractTopMoves(List<(Move move, Board board, int score)> moveBoardScores, bool isMaximizing)
-    {
-        if (isMaximizing)
-        {
-            return moveBoardScores
-                .OrderByDescending(mbs => mbs.score)
-                .Take(5)
-                .Select(mbs => (mbs.move, mbs.board))
-                .ToList();
-        }
-        else
-        {
-            return moveBoardScores
-                .OrderBy(mbs => mbs.score)
-                .Take(5)
-                .Select(mbs => (mbs.move, mbs.board))
-                .ToList();
-        }
     }
 
     public Move Process(Board board, Timer timer)
     {
-        bool me = board.IsWhiteToMove;
         int initialDepth = 4;
         int nbMove = board.GetLegalMoves().Length;
         if (nbMove < 3)
@@ -243,65 +211,17 @@ public class MyBot : IChessBot
         else if (nbMove < 15)
             initialDepth = 5;
         if (timer.MillisecondsRemaining < 5000)
-            initialDepth = 3;
-        var (topMoves, _) = MiniMax(board, initialDepth, int.MinValue, int.MaxValue, board.IsWhiteToMove, false, me);
+            initialDepth = 4;
+        Move bestMove = MiniMax(board, initialDepth, int.MinValue, int.MaxValue, board.IsWhiteToMove, false).Item1;
 
-        Move bestMove = topMoves[0].move;
-        /*Move bestMove = Move.NullMove;
-        int bestScore = board.IsWhiteToMove ? int.MinValue : int.MaxValue;
-
-        foreach (var moveBoard in topMoves)
-        {
-            var (_, nextBestScore) = MiniMax(moveBoard.board, initialDepth, int.MinValue, int.MaxValue, moveBoard.board.IsWhiteToMove, moveBoard.board.IsDraw());
-
-            if (board.IsWhiteToMove)
-            {
-                if (nextBestScore > bestScore)
-                {
-                    bestScore = nextBestScore;
-                    bestMove = moveBoard.move;
-                }
-            }
-            else
-            {
-                if (nextBestScore < bestScore)
-                {
-                    bestScore = nextBestScore;
-                    bestMove = moveBoard.move;
-                }
-            }
-        }*/
+        if (bestMove == Move.NullMove)
+            bestMove = board.GetLegalMoves()[0];
         return bestMove;
     }
-
-
 
     public Move Think(Board board, Timer timer)
     {
         Move move = Process(board, timer);
         return move;  
     }
-
-    /*public Move Think(Board board, Timer timer)
-    {
-        PieceList[] list = board.GetAllPieceLists();
-        int totalPiecesLeft = getSizeofList(list);
-        Move[] moves = board.GetLegalMoves();
-        int depth = 3;
-        if (totalPiecesLeft < 5)
-            depth = 7;
-        if (totalPiecesLeft < 8)
-            depth = 6;
-        else if (moves.Length <= 10 && totalPiecesLeft < 15)
-            depth = 5;
-        else if (moves.Length <= 30)
-            depth = 4;
-        int firsteval = EvaluateBoard(board);
-        Move move;
-
-        move = MiniMax(board, depth, int.MinValue, int.MaxValue, board.IsWhiteToMove, timer).Item1;
-        if (move == Move.NullMove)  
-            move = moves[0];    
-        return (move);
-    }*/
 }
